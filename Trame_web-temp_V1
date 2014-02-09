@@ -1,0 +1,279 @@
+/* --- Programme Arduino ---
+Trame web ds18b20
+-Connect one-wire= Digital I/O Pin 2
+v1	12/2013 www.domoflats.com
+*/
+
+#include <OneWire.h> // librairie pour capteur OneWire
+#include <Ethernet.h>
+#include <SPI.h>
+
+#define MAX_ONE_WIRE 8
+boolean reading = false;
+int temperature;
+// --- Déclaration des constantes ---
+//28 26 EF BB 03 00 00 4E
+//---- code des instructions du capteur
+const int modeLecture=0xBE;
+const int lancerMesure=0x44;
+
+// --- constantes des broches ---
+const int broche_OneWire=2; 
+
+// --- constantes de Temps ---
+const int DLY = 100;//delay en commande de relais
+
+// --- Déclaration des variables globales ---
+byte data[12]; 
+byte adresses[MAX_ONE_WIRE][8]; 
+byte adresse[8]; 
+
+// Adressage reseaux
+byte ip[] = { 192, 168, 0, 177 };   
+byte gateway[] = { 192, 168, 0, 254 }; 
+byte subnet[] = { 255, 255, 255, 0 }; 
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+
+EthernetServer server = EthernetServer(80); //port 80
+// --- Déclaration des objets utiles pour les fonctionnalités utilisées ---
+OneWire  capteur(broche_OneWire);  // crée un objet One Wire sur la broche voulue
+
+int delais = 30;
+int nbCapteurs = 0;
+
+unsigned long curMillis;
+unsigned long oldMillis = 0;
+
+void setup()   
+{ 
+  Serial.begin(9600); // initialise connexion série à 9600 bauds
+  // --- initialisation du capteur DS18B20 ------
+  capteurInit(); // appel de la fonction d'initialisation du capteur - au début seulement 
+	rj45();
+}
+
+
+
+//*************** FONCTION LOOP = Boucle sans fin = coeur du programme *************
+// la fonction loop() s'exécute sans fin en boucle aussi longtemps que l'Arduino est sous tension
+
+void loop()
+{ 
+  // Rien a faire ici tout est géré en interruption
+
+    curMillis = millis();
+
+  if ( ( curMillis - oldMillis ) > delais )
+  {
+  
+    	
+	checkForClient();
+	    oldMillis = curMillis - ( curMillis % 1000);
+  }
+} 
+
+//************************** fonction d'initialisation du capteur ****************
+
+   
+      
+void capteurInit()
+{
+
+
+  nbCapteurs = 0;
+  while ( nbCapteurs == 0 )
+  {
+    
+    while ( capteur.search( adresses[nbCapteurs] ) != false ) 
+    {
+      
+      nbCapteurs ++;
+    }
+    
+    if ( nbCapteurs == 0)
+    {
+
+      delay (1000); // pause 1 seconde
+    }
+    else
+    {
+
+
+
+
+      for ( int idxCapteur = 0; idxCapteur < nbCapteurs; idxCapteur++) 
+      {   
+
+        //--- affichage des 64 bits d'adresse au format hexadécimal
+        for(int i = 0; i < 8; i++) 
+        {
+
+          if ( adresses[idxCapteur][i] < 16 ) 
+          { 
+
+          } 
+
+        }
+        switch ( adresses[idxCapteur][0] )
+        
+        
+        //----- contrôle du code CRC ----
+        // le dernier octet de l'adresse 64bits est un code de contrôle CRC 
+        // à l'aide de la fonction crc8 on peut vérifier si ce code est valide
+        if (capteur.crc8( adresses[idxCapteur], 7) == adresses[idxCapteur][7]) // vérification validité code CRC de l'adresse 64 bits
+        // le code CRC de l'adresse 64 bits est le 8ème octet de l'adresse (index 7 du tableau)
+        {
+
+        }
+        else
+        {
+   
+        }
+               
+      }   
+    }
+  }
+}
+//----------- ehternet ---------- 
+void checkForClient(){ //affichage sur serial et ethernet
+
+  EthernetClient client = server.available();
+
+  if (client) {
+
+    // an http request ends with a blank line
+    boolean currentLineIsBlank = true;
+    boolean sentHeader = false;
+
+    while (client.connected()) {
+      if (client.available()) {
+
+        if(!sentHeader){
+          // send a standard http response header
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: text/html");
+          client.println();
+          sentHeader = true;
+		    
+    
+
+    for ( int i=0; i < nbCapteurs; i++ )
+    {
+      client.print("	");
+      client.print ( capteurMesureTemp(i), 2 );
+	  Serial.print("	");
+      Serial.print ( capteurMesureTemp(i), 2 );
+			  	  
+    }
+		
+
+        }
+
+    }
+
+    delay(1); // give the web browser time to receive the data
+    client.stop(); // close the connection:
+  }
+}}
+void rj45() {
+
+  Ethernet.begin(mac, ip, gateway, subnet); //for manual setup
+
+  server.begin();
+  Serial.println(Ethernet.localIP());
+  }
+
+
+
+float capteurMesureTempLegacy() 
+{ 
+   //-------- variable locale de la fonction ---------- 
+  int tempet=0; // variable pour resultat brute  de la mesure
+  float tempetf=0.0; // variable pour resultat à virgule de la mesure
+ // Serial.println(""); 
+
+  // avant chaque nouvelle instruction, il faut : 
+  //    * initialiser le bus 1-wire
+  //    * sélectionner le capteur détecté
+  //    * envoyer l'instruction 
+
+  //--------- lancer une mesure --------
+  capteur.reset(); // initialise le bus 1-wire avant la communication avec un capteur donné
+  capteur.select(adresse); // sélectionne le capteur ayant l'adresse 64 bits contenue dans le tableau envoyé à la fonction
+  capteur.write(lancerMesure,1); // lance la mesure et alimente le capteur par la broche de donnée
+
+  //-------- pause d'une seconde ----- 
+  // Utilisation de delayMicrosconds au lieu de delay, il semblerait que ce dernier ait un soucis avec la librairie MsTimer2
+  delay(1000);     // au moins 750 ms
+  // il faudrait mettre une instruction capteur.depower ici, mais le reset va le faire
+
+  //---------- passer en mode LECTURE ------------- 
+  capteur.reset(); // initialise le bus 1-wire avant la communication avec un capteur donné
+  capteur.select(adresse); // sélectionne le capteur ayant l'adresse 64 bits contenue dans le tableau envoyé à la fonction
+  capteur.write(modeLecture,1); // passe en mode lecture de la RAM du capteur
+
+  // ----------- lire les 9 octets de la RAM (appelé Scratchpad) ----
+
+  for ( int i = 0; i < 9; i++) {           // 9 octets de RAM stockés dans 9 octets
+    data[i] = capteur.read();             // lecture de l'octet de rang i stocké dans tableau data
+  }
+  //----- caclul de la température mesurée (enfin!) ---------
+
+  data[1]=data[1] & B10000111; // met à 0 les bits de signes inutiles
+  tempet=data[1]; // bits de poids fort
+  tempet=tempet<<8; 
+  tempet=tempet+data[0]; // bits de poids faible
+
+  // --- en mode 12 bits, la résolution est de 0.0625°C - cf datasheet DS18B20
+  tempetf=float(tempet)*6.25;
+  tempetf=tempetf/100.0;
+
+  return (tempetf);
+
+}
+
+//-------------- fonction de mesure de la température --------------- 
+float capteurMesureTemp( int idxCapteur ) 
+{ 
+   //-------- variable locale de la fonction ---------- 
+  int tempet=0; // variable pour resultat brute  de la mesure
+  float tempetf=0.0; // variable pour resultat à virgule de la mesure
+  // avant chaque nouvelle instruction, il faut : 
+  //    * initialiser le bus 1-wire
+  //    * sélectionner le capteur détecté
+  //    * envoyer l'instruction 
+
+  //--------- lancer une mesure --------
+  capteur.reset(); // initialise le bus 1-wire avant la communication avec un capteur donné
+  capteur.select(adresses[idxCapteur]); // sélectionne le capteur ayant l'adresse 64 bits contenue dans le tableau envoyé à la fonction
+  capteur.write(lancerMesure,1); // lance la mesure et alimente le capteur par la broche de donnée
+
+  //-------- pause d'une seconde ----- 
+  // Utilisation de delayMicrosconds au lieu de delay, il semblerait que ce dernier ait un soucis avec la librairie MsTimer2
+  delay(1000);     // au moins 750 ms
+  // il faudrait mettre une instruction capteur.depower ici, mais le reset va le faire
+
+  //---------- passer en mode LECTURE ------------- 
+  capteur.reset(); // initialise le bus 1-wire avant la communication avec un capteur donné
+  capteur.select(adresses[idxCapteur]); // sélectionne le capteur ayant l'adresse 64 bits contenue dans le tableau envoyé à la fonction
+  capteur.write(modeLecture,1); // passe en mode lecture de la RAM du capteur
+
+  // ----------- lire les 9 octets de la RAM (appelé Scratchpad) ----
+  for ( int i = 0; i < 9; i++) 
+  {           
+    data[i] = capteur.read();
+  }
+  //----- caclul de la température mesurée (enfin!) ---------
+
+  data[1] = data[1] & B10000111; // met à 0 les bits de signes inutiles
+  tempet = data[1]; // bits de poids fort
+  tempet = tempet << 8; 
+  tempet = tempet + data[0]; // bits de poids faible
+
+  // --- en mode 12 bits, la résolution est de 0.0625°C - cf datasheet DS18B20
+  tempetf = float(tempet)*6.25;
+  tempetf = tempetf / 100.0;
+
+  return (tempetf);
+
+}
